@@ -79,7 +79,7 @@ python predict_variants.py \
 
 # SLURM wrapper (positional: variant, output_dir, [gtf], [genome])
 sbatch predict_variants.sh test.vcf ./test_outputs \
-    /path/to/gencode.v47.basic.annotation.gtf.gz /path/to/hg38.fa.gz
+    /path/to/gencode.v47.basic.annotation.gtf /path/to/hg38.fa
 ```
 
 ### Splice sites: 5'ss vs 3'ss
