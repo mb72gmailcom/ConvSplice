@@ -61,7 +61,7 @@ For each input variant the script:
 
 ### Inputs
 
-- `--variant_path` `.vcf`/`.vcf.gz` or `.tsv` with columns `chr, pos, ref, alt`
+- `--variant_path` `.vcf` or `.tsv` with columns `chr, pos, ref, alt`
   (`pos` is 0-based for the TSV form, matching the source convention).
 - `--gtf_path` GENCODE GTF (plain or gzipped). Must include `gene`,
   `transcript`, and `exon` features.
@@ -139,9 +139,9 @@ pre-generated expected outputs.
 ```python
 from convsplice import Genome, GTFReader, ConvSplicePredictor
 
-genome = Genome('/path/to/hg38.fa.gz')
-gtf = GTFReader('/path/to/gencode.v47.basic.annotation.gtf.gz',
-                genome_path='/path/to/hg38.fa.gz', add_splice_site=True)
+genome = Genome('/path/to/hg38.fa')
+gtf = GTFReader('/path/to/gencode.v47.basic.annotation.gtf',
+                genome_path='/path/to/hg38.fa', add_splice_site=True)
 predictor = ConvSplicePredictor(genome, use_cuda=True)
 
 transcript = gtf.transcripts['ENST00000367770']
