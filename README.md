@@ -73,8 +73,8 @@ For each input variant the script:
 # Direct
 python predict_variants.py \
     --variant_path test.vcf \
-    --gtf_path /path/to/gencode.v47.basic.annotation.gtf.gz \
-    --genome_path /path/to/hg38.fa.gz \
+    --gtf_path /path/to/gencode.v47.basic.annotation.gtf \
+    --genome_path /path/to/hg38.fa \
     --output_path ./test_outputs
 
 # SLURM wrapper (positional: variant, output_dir, [gtf], [genome])
