@@ -16,12 +16,19 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
+
 from convsplice import ConvSplicePredictor, Genome, GTFReader
 from convsplice.genome_utils import assign_variants_to_genes
 
 
 WINDOW = 10000  # ConvSplice variant context radius
 
+# Model context length ~2 * predictor.WINDOW_SIZE (see convsplice.predictor); splice
+# sites kept here are within WINDOW bp of the variant. Because WINDOW is comparable
+# to half that context, the variant usually lies inside the 25kb window centered on
+# each splice site — so ref vs alt inputs almost always differ and must both run.
+# What repeats wastefully is the reference branch for the same (transcript, splice
+# site) across many variants; see ``cache_ref_scores``.
 
 def _qc_variants(variants):
     variants = variants.drop_duplicates(keep='first')
@@ -69,7 +76,8 @@ def _splice_sites_in_window(transcript, variant_pos):
 
 
 def predict_variant_effects(variant_path, gtf_path, genome_path, output_path,
-                            annotate=True, use_cuda=True, weights_dir=None):
+                            annotate=True, use_cuda=True, weights_dir=None,
+                            cache_ref_scores=True):
     variants = _load_variants(variant_path)
     variants = _qc_variants(variants)
     print(f'Variants after QC: {len(variants)}')
@@ -94,6 +102,11 @@ def predict_variant_effects(variant_path, gtf_path, genome_path, output_path,
     elif 'gene' not in variants.columns:
         raise ValueError('--annotate is False but the variant file has no `gene` column.')
 
+    # Reference ensemble scores depend only on (transcript, splice site), not on
+    # which variant is being scored — cache avoids recomputing ref for every variant.
+    ref_pair_cache = {}
+
+
     rows = []
     for _, var in tqdm(variants.iterrows(), total=len(variants), desc='Variants'):
         gene_id = var['gene']
@@ -113,16 +126,34 @@ def predict_variant_effects(variant_path, gtf_path, genome_path, output_path,
             if not sites:
                 continue
 
-            ref_coords, alt_coords = [], []
-            for ss_pos, _ss_type in sites:
-                ref_coords.append((transcript.chrom, ss_pos, ss_pos + 1, transcript.strand))
-                alt_coords.append((transcript.chrom, ss_pos, ss_pos + 1, transcript.strand,
-                                   var_pos, alt))
+            ref_coords_to_run = []
+            ref_keys_pending = []
+            ref_preds_by_idx = [None] * len(sites)
+                
 
-            ref_preds = predictor.predict_batch(ref_coords, transcript, verbose=0)
+            for idx, (ss_pos, ss_type) in enumerate(sites):
+                cache_key = (transcript.transcript_id, ss_pos, ss_type)
+                if cache_ref_scores and cache_key in ref_pair_cache:
+                    ref_preds_by_idx[idx] = ref_pair_cache[cache_key]
+                else:
+                    ref_coords_to_run.append(
+                        (transcript.chrom, ss_pos, ss_pos + 1, transcript.strand))
+                    ref_keys_pending.append((idx, cache_key))
+
+            if ref_coords_to_run:
+                batch_ref = predictor.predict_batch(ref_coords_to_run, transcript, verbose=0)
+                for (idx, cache_key), ref_pair in zip(ref_keys_pending, batch_ref):
+                    ref_preds_by_idx[idx] = ref_pair
+                    if cache_ref_scores:
+                        ref_pair_cache[cache_key] = ref_pair
+
+            alt_coords = [
+                (transcript.chrom, ss_pos, ss_pos + 1, transcript.strand, var_pos, alt)
+                for ss_pos, _ in sites
+            ]
             alt_preds = predictor.predict_batch(alt_coords, transcript, verbose=0)
 
-            for (ss_pos, ss_type), ref_pair, alt_pair in zip(sites, ref_preds, alt_preds):
+            for (ss_pos, ss_type), ref_pair, alt_pair in zip(sites, ref_preds_by_idx, alt_preds):
                 if ss_type == '5ss':
                     ref_score, alt_score = float(ref_pair[0]), float(alt_pair[0])
                 else:
@@ -180,6 +211,14 @@ def main(argv=None):
                         help='Disable gene annotation. The variant file must already have a `gene` column.')
     parser.add_argument('--cpu', action='store_true', default=False,
                         help='Run on CPU (default: GPU when available).')
+    parser.add_argument(
+        '--disable-ref-cache',
+        action='store_true',
+        default=False,
+        help='Disable caching of reference splice-site scores across variants '
+             '(for debugging / parity with older runs).',
+    )
+
     args = parser.parse_args(argv)
 
     os.makedirs(args.output_path, exist_ok=True)
@@ -196,6 +235,7 @@ def main(argv=None):
         annotate=args.annotate,
         use_cuda=use_cuda,
         weights_dir=args.weights_dir,
+        cache_ref_scores=not args.disable_ref_cache,
     )
 
 
